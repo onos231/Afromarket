@@ -1,9 +1,15 @@
 from sqlalchemy import Column, String, Text
-from backend.database import Base
+from ai.backend.database import Base
+
+class User(Base):
+    __tablename__ = "users"
+    username = Column(String, primary_key=True, index=True)
+    password = Column(String)
 
 class Offer(Base):
     __tablename__ = "offers"
 
+    # Primary key
     id = Column(String, primary_key=True, index=True)
 
     # Have item details
@@ -22,7 +28,17 @@ class Offer(Base):
 
     # General offer info
     location = Column(String)
-    message = Column(Text, nullable=True)   # ✅ Text now imported
+    message = Column(Text, nullable=True)
     status = Column(String)
     timestamp = Column(String)
     matched_with = Column(String, nullable=True)
+
+    # Swap enforcement
+    completion_code = Column(String, nullable=True)
+    confirmed_by = Column(String, nullable=True)
+
+    def __repr__(self):
+        return (
+            f"<Offer(id={self.id}, have={self.have_quantity} {self.have_name}, "
+            f"want={self.want_quantity} {self.want_name}, status={self.status})>"
+        )

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import AuthGuard from "../components/AuthGuard";
 
 export default function SwapPage() {
@@ -12,6 +12,8 @@ export default function SwapPage() {
   const [image, setImage] = useState("");
   const [owner, setOwner] = useState("");
 
+  const [showPrompt, setShowPrompt] = useState(false); // ✅ popup state
+  const router = useRouter();
   const searchParams = useSearchParams();
 
   useEffect(() => {
@@ -25,80 +27,82 @@ export default function SwapPage() {
   }, [searchParams]);
 
   useEffect(() => {
-  if (
-    owner &&
-    owner.trim() !== "" &&
-    owner !== "undefined" &&
-    owner !== "null"
-  ) {
-    localStorage.setItem("afromarket_owner", owner);
-  }
-}, [owner]);
+    if (owner && owner.trim() !== "" && owner !== "undefined" && owner !== "null") {
+      localStorage.setItem("afromarket_owner", owner);
+    }
+  }, [owner]);
 
-const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
 
-  const token = localStorage.getItem("token");
-  if (!token || token === "undefined" || token === "null") {
-    alert("You must be logged in to submit a swap offer.");
-    return;
-  }
-
-  const raw = owner || localStorage.getItem("afromarket_owner") || "";
-  const currentOwner =
-    raw && raw !== "undefined" && raw !== "null" ? raw : "";
-
-  const newOffer = {
-    have_item: {
-      name: haveItem,
-      quantity: "1",
-      category: "Roots",
-      image: image || null,
-      owner: currentOwner,
-    },
-    want_item: {
-      name: wantItem,
-      quantity: "1",
-      category: "Roots",
-      owner: currentOwner,
-    },
-    location,
-    message,
-  };
-
-  console.log("Token being sent:", token);
-  console.log("Submitting offer:", newOffer);
-
-  try {
-    const res = await fetch("http://localhost:8000/offers", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(newOffer),
-    });
-
-    if (res.status === 401) {
-      alert("Session expired. Please log in again.");
-      localStorage.removeItem("token");
-      window.location.href = "/auth";
+    const token = localStorage.getItem("token");
+    if (!token || token === "undefined" || token === "null") {
+      alert("You must be logged in to submit a swap offer.");
       return;
     }
 
-    if (!res.ok) {
-      const errorText = await res.text();
-      throw new Error(`Failed: ${res.status} - ${errorText}`);
-    }
+    const newOffer = {
+      have_item: {
+        name: haveItem,
+        quantity: "1",
+        category: "Misc",
+        image: image || null,
+        owner: owner,
+      },
+      want_item: {
+        name: wantItem,
+        quantity: "1",
+        category: "Misc",
+        image: null,
+        owner: null,
+      },
+      location: location,
+      message: message,
+    };
 
-    const data = await res.json();
-    alert("Swap offer created!");
-    console.log("Offer created:", data);
-  } catch (err) {
-    console.error("Error submitting offer:", err);
-    alert("Failed to create swap offer.");
-  }
-};
+    try {
+      const res = await fetch("http://localhost:8000/offers", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify(newOffer),
+      });
+
+      if (res.status === 401) {
+        alert("Session expired. Please log in again.");
+        localStorage.removeItem("token");
+        window.location.href = "/auth";
+        return;
+      }
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`Failed: ${res.status} - ${errorText}`);
+      }
+
+      const data = await res.json();
+      console.log("Offer created:", data);
+
+      // ✅ Show popup
+      setShowPrompt(true);
+
+      // ✅ Auto redirect after 3 seconds
+      setTimeout(() => {
+        setShowPrompt(false);
+        router.push("/"); // landing page
+      }, 3000);
+    } catch (err) {
+      console.error("Error submitting offer:", err);
+      alert("Failed to create swap offer.");
+    }
+  };
+
+  const handleClosePrompt = () => {
+    setShowPrompt(false);
+    router.push("/"); // redirect immediately
+  };
 
   return (
     <AuthGuard>
@@ -183,6 +187,22 @@ const handleSubmit = async (e: React.FormEvent) => {
             Submit Swap Offer
           </button>
         </form>
+
+        {/* ✅ Popup Prompt */}
+        {showPrompt && (
+          <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-10">
+            <div className="bg-white p-6 rounded shadow-lg text-center">
+              <h2 className="text-xl font-bold text-green-600">Swap Offer Created!</h2>
+              <p className="mt-2 text-gray-600">Redirecting to offers...</p>
+              <button
+                onClick={handleClosePrompt}
+                className="mt-4 bg-green-600 text-white px-4 py-2 rounded"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
       </main>
     </AuthGuard>
   );

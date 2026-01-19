@@ -41,22 +41,23 @@ export default function SwapDetailsModal({
   const [confirmationCode, setConfirmationCode] = useState("");
 
   // Status state
+  const isMyMatchedOffer = currentUser === matchedOffer?.have_owner;
+
   const [swapStatus, setSwapStatus] = useState<Offer["status"]>(
     offer.status === "completed" ? "completed" : offer.status
   );
 
-  // Derived flags — define BEFORE any usage/logging
   const isCompleted = swapStatus === "completed";
-  const isMatched =
-    !!matchedOffer &&
-    (offer.status === "matched" ||
-      matchedOffer.status === "matched" ||
-      swapStatus === "matched");
 
-  // Debug
-  console.log("swapStatus:", swapStatus);
-  console.log("isMatched:", isMatched);
-  console.log("isCompleted:", isCompleted);
+  const isMyOffer = currentUser === offer.have_owner;
+  const isMatched = offer.status === "matched" && matchedOffer?.status === "matched";
+  const isCreator = currentUser === offer.have_owner;
+  const isResponder = currentUser === matchedOffer?.have_owner;
+
+  // ✅ Decide which side is "Your offer" based on logged-in user
+  const isCurrentUserLeft = currentUser === offer.have_owner;
+  const leftData = isCurrentUserLeft ? offer : matchedOffer;
+  const rightData = isCurrentUserLeft ? matchedOffer : offer;
 
   // Badge helper
   const StatusBadge = ({ status }: { status: string }) => {
@@ -129,34 +130,36 @@ export default function SwapDetailsModal({
         {/* Offer cards */}
         <div className="grid gap-6 md:grid-cols-2">
           {/* Left: Your offer */}
-          <div className="border rounded p-4">
-            <div className="flex justify-between mb-2">
-              <h3 className="text-xl font-bold text-green-600">Your offer</h3>
-              <StatusBadge status={swapStatus} />
+          {leftData && (
+            <div className="border rounded p-4">
+              <div className="flex justify-between mb-2">
+                <h3 className="text-xl font-bold text-green-600">Your offer</h3>
+                <StatusBadge status={swapStatus} />
+              </div>
+              <p><strong>Have:</strong> {leftData.have_name} ({leftData.have_quantity})</p>
+              <p><strong>Want:</strong> {leftData.want_name} ({leftData.want_quantity})</p>
+              <p><strong>Owner:</strong> {leftData.have_owner} {isCompleted && "✅"}</p>
+              <p><strong>Location:</strong> {leftData.location}</p>
+              <p><strong>Message:</strong> {leftData.message}</p>
+              <p><strong>Status:</strong> {swapStatus}</p>
+              <p><strong>Sent:</strong> {new Date(leftData.timestamp).toLocaleString()}</p>
             </div>
-            <p><strong>Have:</strong> {offer.have_name} ({offer.have_quantity})</p>
-            <p><strong>Want:</strong> {offer.want_name} ({offer.want_quantity})</p>
-            <p><strong>Owner:</strong> {offer.have_owner} {isCompleted && "✅"}</p>
-            <p><strong>Location:</strong> {offer.location}</p>
-            <p><strong>Message:</strong> {offer.message}</p>
-            <p><strong>Status:</strong> {swapStatus}</p>
-            <p><strong>Sent:</strong> {new Date(offer.timestamp).toLocaleString()}</p>
-          </div>
+          )}
 
           {/* Right: Matched offer */}
-          {matchedOffer && (
+          {rightData && (
             <div className="border rounded p-4">
               <div className="flex justify-between mb-2">
                 <h3 className="text-xl font-bold text-blue-600">Matched with</h3>
                 <StatusBadge status={swapStatus} />
               </div>
-              <p><strong>Have:</strong> {matchedOffer.have_name} ({matchedOffer.have_quantity})</p>
-              <p><strong>Want:</strong> {matchedOffer.want_name} ({matchedOffer.want_quantity})</p>
-              <p><strong>Owner:</strong> {matchedOffer.have_owner} {isCompleted && "✅"}</p>
-              <p><strong>Location:</strong> {matchedOffer.location}</p>
-              <p><strong>Message:</strong> {matchedOffer.message}</p>
+              <p><strong>Have:</strong> {rightData.have_name} ({rightData.have_quantity})</p>
+              <p><strong>Want:</strong> {rightData.want_name} ({rightData.want_quantity})</p>
+              <p><strong>Owner:</strong> {rightData.have_owner} {isCompleted && "✅"}</p>
+              <p><strong>Location:</strong> {rightData.location}</p>
+              <p><strong>Message:</strong> {rightData.message}</p>
               <p><strong>Status:</strong> {swapStatus}</p>
-              <p><strong>Sent:</strong> {new Date(matchedOffer.timestamp).toLocaleString()}</p>
+              <p><strong>Sent:</strong> {new Date(rightData.timestamp).toLocaleString()}</p>
             </div>
           )}
         </div>
@@ -202,87 +205,89 @@ export default function SwapDetailsModal({
                           if (chatInput.trim() !== "") {
                             setChatMessages((prev) => [...prev, chatInput]);
                             setChatInput("");
-                          }
-                        }}
-                        className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 text-sm"
-                      >
-                        Send
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+}
+}}
+className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 text-sm"
+>
+Send
+</button>
+</div>
+</div>
+)}
+</div>
 
-              {/* Finalize Swap Section */}
-  <div className="border rounded p-4">
-    <h4 className="text-md font-semibold mb-2">Finalize Swap</h4>
+{/* Finalize Swap Section */}
+<div className="border rounded p-4">
+<h4 className="text-md font-semibold mb-2">Finalize Swap</h4>
 
-    {currentUser === offer.have_owner ? (
-      // User A: enters code to complete
-      <div>
-        <input
-          type="text"
-          value={confirmationCode}
-          onChange={(e) => setConfirmationCode(e.target.value)}
-          placeholder="Enter confirmation code"
-          className="border rounded px-2 py-1 w-full mb-2"
-        />
-        <div className="flex gap-2">
-          <button
-            onClick={handleComplete}
-            className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
-          >
-            Complete
-          </button>
-          <button
-            onClick={handleDecline}
-            className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
-          >
-            Decline
-          </button>
-        </div>
-      </div>
-    ) : currentUser === matchedOffer?.have_owner ? (
-      // User B: generates and shares code
-      <div>
-        <button
-          onClick={async () => {
-            try {
-              const res = await fetch(`/api/offers/${offer.id}/generate-code`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-              });
-              const data = await res.json();
-              setConfirmationCode(data.code);
-            } catch (err) {
-              console.error("Error generating code:", err);
-              alert("Could not generate code. Please try again.");
-            }
-          }}
-          className="px-3 py-1 bg-purple-500 text-white rounded hover:bg-purple-600"
-        >
-          Generate Code
-        </button>
+{isMatched ? (
+isCreator ? (
+// Creator: Enter code
+<div>
+<input
+type="text"
+value={confirmationCode}
+onChange={(e) => setConfirmationCode(e.target.value)}
+placeholder="Enter confirmation code"
+className="border rounded px-2 py-1 w-full mb-2"
+/>
+<div className="flex gap-2">
+<button
+onClick={handleComplete}
+className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
+>
+Complete
+</button>
+<button
+onClick={handleDecline}
+className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
+>
+Decline
+</button>
+</div>
+</div>
+) : isResponder ? (
+// Responder: Generate code
+<div>
+<button
+onClick={async () => {
+try {
+const res = await fetch(`/api/offers/${offer.id}/generate-code`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+});
+const data = await res.json();
+setConfirmationCode(data.code);
+} catch (err) {
+console.error("Error generating code:", err);
+alert("Could not generate code. Please try again.");
+}
+}}
+className="px-3 py-1 bg-purple-500 text-white rounded hover:bg-purple-600"
+>
+Generate Code
+</button>
 
-        {confirmationCode && (
-          <p className="mt-2 text-gray-700">
-            Share this code with the other user: <strong>{confirmationCode}</strong>
-          </p>
-        )}
+{confirmationCode && (
+<p className="mt-2 text-gray-700">
+Share this code with the other user: <strong>{confirmationCode}</strong>
+</p>
+)}
 
-        <button
-          onClick={handleDecline}
-          className="mt-2 px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
-        >
-          Decline
-        </button>
-      </div>
-    ) : (
-      <p className="text-gray-500 text-sm">
-        You are not authorized to finalize this swap.
-      </p>
-    )}
-  </div>
+<button
+onClick={handleDecline}
+className="mt-2 px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
+>
+Decline
+</button>
+</div>
+) : (
+<p className="text-gray-500 text-sm">
+You are not authorized to finalize this swap.
+</p>
+)
+) : null}
+</div>
 </div>
 </div>
 )}
@@ -299,7 +304,7 @@ className="mt-6 w-full bg-green-600 text-white py-2 rounded hover:bg-green-700"
 >
 Close
 </button>
-</div>  {/* closes inner modal container */}
-</div>    
+</div>
+</div>
 );
 }

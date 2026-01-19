@@ -1,10 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Header from "./components/Header";
 import SwapDetailsModal from "./components/SwapDetailsModal";
-import { tryMatchOffers } from "./utils/match";
-
+import { useSearchParams } from "next/navigation";
 
 type Offer = {
   id: string;
@@ -25,81 +23,97 @@ type Offer = {
   matched_with?: string | null;
 };
 
-
 export default function LandingPage() {
   const [offers, setOffers] = useState<Offer[]>([]);
   const [selected, setSelected] = useState<{ offer: Offer; matched: Offer | null } | null>(null);
+  const [currentUser, setCurrentUser] = useState("");
+  const [page, setPage] = useState(1);
+  const pageSize = 6;
 
+  // ✅ declare filter states
   const [searchTerm, setSearchTerm] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [locationFilter, setLocationFilter] = useState("");
   const [ownerFilter, setOwnerFilter] = useState("");
-  const [currentUser, setCurrentUser] = useState("");
+
+  const searchParams = useSearchParams();
 
   useEffect(() => {
-  const storedUser = localStorage.getItem("afromarket_owner") || "";
-  console.log("LandingPage loaded currentUser:", storedUser);
-  console.log("Modal received currentUser:", currentUser);
-  setCurrentUser(storedUser);
-}, []);
+    const storedUser = localStorage.getItem("afromarket_owner") || "";
+    setCurrentUser(storedUser);
+  }, []);
 
+  const fetchOffers = async () => {
+  try {
+    let page = 1;
+    let allOffers: Offer[] = [];
 
+    while (true) {
+      const res = await fetch(`http://localhost:8000/offers?page=${page}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      });
+      const data = await res.json();
 
-useEffect(() => {
-fetch(`http://localhost:8000/offers`, {
-  method: "GET",
-  headers: {
-    Authorization: `Bearer ${localStorage.getItem("token")}`,
-  },
-})
-  .then((res) => res.json())
-  .then(async (data) => {
-    const userOffers: Offer[] = data.offers || [];
+      const pageOffers: Offer[] = data.offers || [];
+      allOffers = [...allOffers, ...pageOffers];
 
-    // Extract matched_with IDs
-    const matchIds = userOffers
-      .map((o) => o.matched_with)
-      .filter((id): id is string => id !== null);
+      if (!data.next_page) break;
+      page = data.next_page;
+    }
 
-    // Fetch matched offers one by one
+    // ✅ Collect matched offers for each
+    const matchIds = allOffers.map((o) => o.matched_with).filter((id): id is string => !!id);
     const matchedOffers: Offer[] = await Promise.all(
       matchIds.map(async (id) => {
         const res = await fetch(`http://localhost:8000/offers/${id}`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
-          },
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
         });
         const data = await res.json();
         return data.offer || data;
       })
     );
 
-    // ✅ Merge and deduplicate
-    const allOffers = [...userOffers, ...matchedOffers];
-    const uniqueOffers = allOffers.filter(
-      (offer, index, self) =>
-        index === self.findIndex((o) => o.id === offer.id)
+    const combined = [...allOffers, ...matchedOffers];
+    const uniqueOffers = combined.filter(
+      (offer, index, self) => index === self.findIndex((o) => o.id === offer.id)
     );
 
+    console.log("Fetched offers:", uniqueOffers);
     setOffers(uniqueOffers);
-  })
-  .catch((err) => {
+  } catch (err) {
     console.error("Error fetching offers:", err);
-  });
-}, []);
+  }
+};
 
+
+  // ✅ Always run on mount, and whenever query params change
+  useEffect(() => {
+  fetchOffers();
+}, [searchParams]);   // ✅ refetch when ?refresh changes
+
+
+  // filters
   const filteredOffers = offers.filter((offer) => {
     const matchesSearch =
       offer.have_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       offer.want_name?.toLowerCase().includes(searchTerm.toLowerCase());
-
     const matchesCategory = !categoryFilter || offer.have_category === categoryFilter;
     const matchesLocation = !locationFilter || offer.location === locationFilter;
     const matchesOwner = !ownerFilter || offer.have_owner === ownerFilter;
-
     return matchesSearch && matchesCategory && matchesLocation && matchesOwner;
   });
+
+  // only show one card per user when matched
+  const visibleOffers = filteredOffers.filter((offer) => {
+    if (offer.status === "matched") {
+      return offer.have_owner === currentUser || offer.want_owner === currentUser;
+    }
+    return true;
+  });
+
+  // frontend pagination
+  const totalPages = Math.ceil(visibleOffers.length / pageSize);
+  const paginatedOffers = visibleOffers.slice((page - 1) * pageSize, page * pageSize);
 
   return (
     <main className="min-h-screen bg-gray-100 p-8">
@@ -152,65 +166,91 @@ fetch(`http://localhost:8000/offers`, {
       </div>
 
       {/* Offers Grid */}
-<div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-  {filteredOffers.map((offer, index) => (
-    <div
-      key={`${offer.id}-${offer.have_owner}-${index}`}
-      className="card bg-white p-4 rounded shadow cursor-pointer hover:shadow-lg transition"
-      onClick={() => {
-        const matchedOffer = offers.find((o) => o.id === offer.matched_with);
-        setSelected({ offer, matched: matchedOffer || null });
-      }}
-    >
-      <img
-        src={offer.have_image || "/images/default.png"}
-        alt={offer.have_name}
-        className="w-full h-48 object-cover rounded mb-4"
-      />
-      <h2 className="text-xl font-semibold text-green-700">
-        {offer.have_name} ({offer.have_quantity})
-      </h2>
-      <p className="text-gray-700">Category: {offer.have_category}</p>
-      <p className="text-gray-700">Owner: {offer.have_owner}</p>
-      <p className="text-gray-700">Location: {offer.location}</p>
-      <p className="text-sm text-gray-500">
-        Sent: {new Date(offer.timestamp).toLocaleString()}
-      </p>
-      <p className="mt-2 italic text-gray-600">“{offer.message}”</p>
+      <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {paginatedOffers.map((offer) => (
+          <div
+            key={offer.id}
+            className="card bg-white p-4 rounded shadow cursor-pointer hover:shadow-lg transition"
+            onClick={() => {
+              const matchedOffer = offers.find((o) => o.id === offer.matched_with);
+              if (!matchedOffer) {
+                setSelected({ offer, matched: null });
+                return;
+              }
+              const isOfferEarlier = new Date(offer.timestamp) < new Date(matchedOffer.timestamp);
+              const creatorOffer = isOfferEarlier ? offer : matchedOffer;
+              const responderOffer = isOfferEarlier ? matchedOffer : offer;
+              setSelected({ offer: creatorOffer, matched: responderOffer });
+            }}
+          >
+            <img
+              src={offer.have_image || "/images/default.png"}
+              alt={offer.have_name}
+              className="w-full h-48 object-cover rounded mb-4"
+            />
+            <h2 className="text-xl font-semibold text-green-700">
+              {offer.have_name} ({offer.have_quantity})
+            </h2>
+            <p className="text-gray-700">Category: {offer.have_category}</p>
+            <p className="text-gray-700">Owner: {offer.have_owner}</p>
+            <p className="text-gray-700">Location: {offer.location}</p>
+            <p className="text-sm text-gray-500">
+              Sent: {new Date(offer.timestamp).toLocaleString()}
+            </p>
+            <p className="mt-2 italic text-gray-600">“{offer.message}”</p>
+            <span
+              className={`mt-4 inline-block px-3 py-1 rounded text-sm font-medium ${
+                offer.status === "pending"
+                  ? "bg-green-100 text-green-700"
+                  : offer.status === "matched"
+                  ? "bg-yellow-100 text-yellow-700"
+                  : "bg-red-100 text-red-700"
+              }`}
+            >
+              {offer.status}
+            </span>
+          </div>
+        ))}
+      </div>
 
-      {/* ✅ Badge */}
-      <span
-        className={`mt-4 inline-block px-3 py-1 rounded text-sm font-medium ${
-          offer.status === "pending"
-            ? "bg-green-100 text-green-700"
-            : offer.status === "matched"
-            ? "bg-yellow-100 text-yellow-700"
-            : "bg-red-100 text-red-700"
-        }`}
-      >
-        {offer.badge}
-      </span>
-    </div>
-  ))}
-</div>
+      {/* Pagination controls */}
+      <div className="flex justify-center items-center gap-4 mt-8">
+        <button
+          disabled={page <= 1}
+          onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
+          className="px-4 py-2 bg-gray-300 rounded disabled:opacity-50"
+        >
+          Previous
+        </button>
+        <span>
+          Page {page} of {totalPages}
+        </span>
+        <button
+          disabled={page >= totalPages}
+          onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
+          className="px-4 py-2 bg-gray-300 rounded disabled:opacity-50"
+        >
+          Next
+        </button>
+      </div>
 
-{/* Modal */}
-{selected && (
-  <SwapDetailsModal
-    offer={selected.offer}
-    matchedOffer={selected.matched}
-    currentUser={currentUser}
-    onClose={() => setSelected(null)}
-  />
-)}
+      {/* Modal */}
+  {selected && (
+    <SwapDetailsModal
+      offer={selected.offer}
+      matchedOffer={selected.matched}
+      currentUser={currentUser}
+      onClose={() => setSelected(null)}   // ✅ complete the onClose handler
+    />
+  )}
 
-      {/* Floating Create Swap Offer button */}
-      <a
-        href="/swap"
-        className="fixed bottom-6 right-6 bg-green-600 text-white px-6 py-3 rounded-full shadow-lg hover:bg-green-700 transition"
-      >
-        + Create Swap Offer
-      </a>
-    </main>
-  );
+  {/* Floating Create Swap Offer button */}
+  <a
+    href="/swap"
+    className="fixed bottom-6 right-6 bg-green-600 text-white px-6 py-3 rounded-full shadow-lg hover:bg-green-700 transition"
+  >
+    + Create Swap Offer
+  </a>
+</main>
+);
 }

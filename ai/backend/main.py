@@ -1,43 +1,43 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
-from pydantic import BaseModel
-from typing import Optional
-from datetime import datetime
+import logging
+import sqlalchemy
+from sqlalchemy.orm import Session   # 👈 this fixes the NameError
 import uuid
+from datetime import datetime
 
-from backend.database import SessionLocal, engine
-from backend.models import Offer, Base
-from backend.auth import router as auth_router, get_current_user
+from typing import Optional          # 👈 needed for Optional fields
+from pydantic import BaseModel       # 👈 needed for Pydantic schemas
+
+from ai.backend.database import SessionLocal, engine, Base
+from ai.backend.models import Offer
+from ai.backend.auth import router as auth_router, get_current_user
+
+
+
+logging.basicConfig(level=logging.DEBUG)
 
 # ✅ Create tables once
 Base.metadata.create_all(bind=engine)
 
-# 🔧 Helper: badge mapping
-def badge_for_status(status: str) -> str:
-    if status == "pending":
-        return "🟢 Pending"
-    elif status == "matched":
-        return "🟡 Matched"
-    elif status in ["completed", "declined"]:
-        return "🔴 " + status.capitalize()
-    else:
-        return status
+print("SQLAlchemy version:", sqlalchemy.__version__)
+with engine.connect() as conn:
+    tables = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table';").fetchall()
+    print("Tables created:", tables)
 
-# FastAPI app
 app = FastAPI()
 
-# Allow frontend to talk to backend
+# ✅ Add CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["*"],  # or ["http://localhost:3000"] for your Next.js frontend
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # allow POST, GET, OPTIONS, etc.
+    allow_headers=["*"],  # allow Authorization, Content-Type, etc.
 )
 
-# ✅ Include authentication routes
-app.include_router(auth_router, prefix="/auth")
+
+app.include_router(auth_router)  # no prefix here
 
 # Dependency: get DB session
 def get_db():
@@ -66,6 +66,18 @@ class OfferCreate(BaseModel):
     want_item: Item
     location: str
     message: Optional[str] = None
+
+# 🔧 Helper: badge mapping
+def badge_for_status(status: str) -> str:
+    if status == "pending":
+        return "🟢 Pending"
+    elif status == "matched":
+        return "🟡 Matched"
+    elif status in ["completed", "declined"]:
+        return "🔴 " + status.capitalize()
+    else:
+        return status
+
 
 # ✅ Create an offer
 @app.post("/offers")
@@ -107,6 +119,9 @@ def create_offer(
         timestamp=datetime.utcnow().isoformat(),
     )
 
+    # ✅ Debug print at same level as db.add
+    print("Saved offer:", new_offer)
+
     db.add(new_offer)
 
     # 🔍 Try to find reciprocal match
@@ -132,92 +147,176 @@ def create_offer(
         "offer": {**to_dict(new_offer), "badge": badge_for_status(new_offer.status)}
     }
 
+
 # ✅ List ALL offers (landing page)
 @app.get("/offers")
-def list_offers(db: Session = Depends(get_db)):
-    all_offers = db.query(Offer).all()
+def list_offers(
+    page: int = 1,
+    page_size: int = 20,
+    db: Session = Depends(get_db)
+):
+    if page < 1:
+        page = 1
+    total = db.query(Offer).count()
+    offset = (page - 1) * page_size
+    offers = db.query(Offer).offset(offset).limit(page_size).all()
+
+    # ✅ Debug
+    print("Offers in DB:", [o.have_owner for o in offers])
+    total_pages = (total + page_size - 1) // page_size
+
     return {
-        "offers": [
-            {**to_dict(o), "badge": badge_for_status(o.status)}
-            for o in all_offers
-        ]
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "next_page": page + 1 if page < total_pages else None,
+        "prev_page": page - 1 if page > 1 else None,
+        "offers": [{**to_dict(o), "badge": badge_for_status(o.status)} for o in offers]
     }
+
+
+
 
 # ✅ List MY offers (personal dashboard)
 @app.get("/offers/my")
 def list_my_offers(
+    page: int = 1,
+    page_size: int = 20,
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    user_offers = db.query(Offer).filter(Offer.have_owner == current_user).all()
+    if page < 1:
+        page = 1
+    query = db.query(Offer).filter(Offer.have_owner == current_user)
+    total = query.count()
+    offset = (page - 1) * page_size
+    offers = query.offset(offset).limit(page_size).all()
+    total_pages = (total + page_size - 1) // page_size
+
     return {
-        "offers": [
-            {**to_dict(o), "badge": badge_for_status(o.status)}
-            for o in user_offers
-        ]
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "next_page": page + 1 if page < total_pages else None,
+        "prev_page": page - 1 if page > 1 else None,
+        "offers": [{**to_dict(o), "badge": badge_for_status(o.status)} for o in offers]
     }
+
 
 # ✅ Get active offers (pending + matched) for current user
 @app.get("/offers/active")
 def list_active_offers(
+    page: int = 1,
+    page_size: int = 20,
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    active_offers = db.query(Offer).filter(
+    if page < 1:
+        page = 1
+    query = db.query(Offer).filter(
         Offer.have_owner == current_user,
         Offer.status.in_(["pending", "matched"])
-    ).all()
+    )
+    total = query.count()
+    offset = (page - 1) * page_size
+    offers = query.offset(offset).limit(page_size).all()
+    total_pages = (total + page_size - 1) // page_size
+
     return {
-        "active_offers": [
-            {**to_dict(o), "badge": badge_for_status(o.status)}
-            for o in active_offers
-        ]
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "next_page": page + 1 if page < total_pages else None,
+        "prev_page": page - 1 if page > 1 else None,
+        "active_offers": [{**to_dict(o), "badge": badge_for_status(o.status)} for o in offers]
     }
+
 
 # ✅ Get offer history (completed or declined) for current user
 @app.get("/offers/history")
 def offer_history(
+    page: int = 1,
+    page_size: int = 20,
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    past_offers = db.query(Offer).filter(
+    if page < 1:
+        page = 1
+    query = db.query(Offer).filter(
         Offer.have_owner == current_user,
         Offer.status.in_(["completed", "declined"])
-    ).all()
+    )
+    total = query.count()
+    offset = (page - 1) * page_size
+    offers = query.offset(offset).limit(page_size).all()
+    total_pages = (total + page_size - 1) // page_size
+
     return {
-        "history": [
-            {**to_dict(o), "badge": badge_for_status(o.status)}
-            for o in past_offers
-        ]
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "next_page": page + 1 if page < total_pages else None,
+        "prev_page": page - 1 if page > 1 else None,
+        "history": [{**to_dict(o), "badge": badge_for_status(o.status)} for o in offers]
     }
+
 
 # ✅ Get only matched offers (your side only)
 @app.get("/offers/matches")
 def list_matched_offers(
+    page: int = 1,
+    page_size: int = 20,
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    matched_offers = db.query(Offer).filter(
+    if page < 1:
+        page = 1
+
+    query = db.query(Offer).filter(
         Offer.have_owner == current_user,
         Offer.status == "matched"
-    ).all()
+    )
+
+    total = query.count()
+    offset = (page - 1) * page_size
+    offers = query.offset(offset).limit(page_size).all()
+    total_pages = (total + page_size - 1) // page_size
+
     return {
-        "matches": [
-            {**to_dict(o), "badge": badge_for_status(o.status)}
-            for o in matched_offers
-        ]
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "next_page": page + 1 if page < total_pages else None,
+        "prev_page": page - 1 if page > 1 else None,
+        "matches": [{**to_dict(o), "badge": badge_for_status(o.status)} for o in offers]
     }
+
 
 # ✅ Get matched offers with both sides
 @app.get("/offers/matches/full")
 def list_full_matches(
+    page: int = 1,
+    page_size: int = 20,
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    matched_offers = db.query(Offer).filter(
+    if page < 1:
+        page = 1
+
+    query = db.query(Offer).filter(
         Offer.have_owner == current_user,
         Offer.status == "matched"
-    ).all()
+    )
+
+    total = query.count()
+    offset = (page - 1) * page_size
+    matched_offers = query.offset(offset).limit(page_size).all()
+    total_pages = (total + page_size - 1) // page_size
 
     results = []
     for o in matched_offers:
@@ -229,7 +328,17 @@ def list_full_matches(
                 if partner else None
             )
         })
-    return {"matches": results}
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "next_page": page + 1 if page < total_pages else None,
+        "prev_page": page - 1 if page > 1 else None,
+        "matches": results
+    }
+
 
 # ✅ Mark an offer as completed
 @app.patch("/offers/{offer_id}/complete")
@@ -307,4 +416,96 @@ def get_offer(offer_id: str, db: Session = Depends(get_db)):
     offer = db.query(Offer).filter(Offer.id == offer_id).first()
     if not offer:
         raise HTTPException(status_code=404, detail="Offer not found")
+
+        print("Returning offers:", offers) # ✅ Debug
     return {**to_dict(offer), "badge": badge_for_status(offer.status)}
+
+
+
+# Helper: generate secure code
+def generate_secure_code(length: int = 20) -> str:
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
+
+# ✅ Creator generates code
+@app.post("/offers/{offer_id}/generate-code")
+def generate_code(
+    offer_id: str,
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offer not found")
+
+    if offer.have_owner != current_user:
+        raise HTTPException(status_code=403, detail="Only the creator can generate the code")
+
+    code = generate_secure_code()
+    offer.completion_code = code
+    offer.status = "code_generated"
+    db.add(offer)
+    db.commit()
+    db.refresh(offer)
+
+    return {"message": "Code generated successfully", "code": code}
+
+# ✅ Responder confirms code
+@app.post("/offers/{offer_id}/confirm-code")
+def confirm_code(
+    offer_id: str,
+    code: str,
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offer not found")
+
+    if offer.want_owner != current_user:
+        raise HTTPException(status_code=403, detail="Only the responder can confirm the code")
+
+    if offer.completion_code != code:
+        raise HTTPException(status_code=400, detail="Invalid code")
+
+    offer.status = "completed"
+    offer.confirmed_by = current_user
+    offer.completion_code = None
+
+    if offer.matched_with:
+        partner = db.query(Offer).filter(Offer.id == offer.matched_with).first()
+        if partner:
+            partner.status = "completed"
+            db.add(partner)
+
+    db.add(offer)
+    db.commit()
+    db.refresh(offer)
+
+    return {"message": "Swap completed successfully", "offer": to_dict(offer)}
+
+# ✅ Decline swap (either user)
+@app.post("/offers/{offer_id}/decline-swap")
+def decline_swap(
+    offer_id: str,
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offer not found")
+
+    if current_user not in [offer.have_owner, offer.want_owner]:
+        raise HTTPException(status_code=403, detail="You are not part of this swap")
+
+    offer.status = "declined"
+    if offer.matched_with:
+        partner = db.query(Offer).filter(Offer.id == offer.matched_with).first()
+        if partner:
+            partner.status = "declined"
+            db.add(partner)
+
+    db.add(offer)
+    db.commit()
+    db.refresh(offer)
+
+    return {"message": "Swap declined", "offer": to_dict(offer)}
