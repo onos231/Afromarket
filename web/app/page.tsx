@@ -77,7 +77,7 @@ useEffect(() => {
         setOffers(allOffers);
       })
       .catch((err) => {
-        console.error("Error fetching offers:", err);
+        console.error("this is Error fetching offers:", err);
       });
   }, []);
 
