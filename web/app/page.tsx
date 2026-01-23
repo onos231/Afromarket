@@ -25,6 +25,7 @@ type Offer = {
   matched_with?: string | null;
 };
 
+
 export default function LandingPage() {
   const [offers, setOffers] = useState<Offer[]>([]);
   const [selected, setSelected] = useState<{ offer: Offer; matched: Offer | null } | null>(null);
@@ -35,51 +36,58 @@ export default function LandingPage() {
   const [ownerFilter, setOwnerFilter] = useState("");
   const [currentUser, setCurrentUser] = useState("");
 
-
-useEffect(() => {
-  const storedUser = localStorage.getItem("username") || "";
+  useEffect(() => {
+  const storedUser = localStorage.getItem("afromarket_owner") || "";
+  console.log("LandingPage loaded currentUser:", storedUser);
+  console.log("Modal received currentUser:", currentUser);
   setCurrentUser(storedUser);
 }, []);
 
 
-  useEffect(() => {
-    fetch(`http://localhost:8000/offers`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem("token")}`,
-      },
-    })
-      .then((res) => res.json())
-      .then(async (data) => {
-        const userOffers: Offer[] = data.offers || [];
 
-        // Extract matched_with IDs
-        const matchIds = userOffers
-          .map((o) => o.matched_with)
-          .filter((id): id is string => id !== null);
+useEffect(() => {
+fetch(`http://localhost:8000/offers`, {
+  method: "GET",
+  headers: {
+    Authorization: `Bearer ${localStorage.getItem("token")}`,
+  },
+})
+  .then((res) => res.json())
+  .then(async (data) => {
+    const userOffers: Offer[] = data.offers || [];
 
-        // Fetch matched offers one by one
-        const matchedOffers: Offer[] = await Promise.all(
-          matchIds.map(async (id) => {
-            const res = await fetch(`http://localhost:8000/offers/${id}`, {
-              method: "GET",
-              headers: {
-                Authorization: `Bearer ${localStorage.getItem("token")}`,
-              },
-            });
-            const data = await res.json();
-            return data.offer || data; // unwrap if backend wraps in {offer: …}
-          })
-        );
+    // Extract matched_with IDs
+    const matchIds = userOffers
+      .map((o) => o.matched_with)
+      .filter((id): id is string => id !== null);
 
-        // Combine both sets
-        const allOffers = [...userOffers, ...matchedOffers];
-        setOffers(allOffers);
+    // Fetch matched offers one by one
+    const matchedOffers: Offer[] = await Promise.all(
+      matchIds.map(async (id) => {
+        const res = await fetch(`http://localhost:8000/offers/${id}`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("token")}`,
+          },
+        });
+        const data = await res.json();
+        return data.offer || data;
       })
-      .catch((err) => {
-        console.error("this is Error fetching offers:", err);
-      });
-  }, []);
+    );
+
+    // ✅ Merge and deduplicate
+    const allOffers = [...userOffers, ...matchedOffers];
+    const uniqueOffers = allOffers.filter(
+      (offer, index, self) =>
+        index === self.findIndex((o) => o.id === offer.id)
+    );
+
+    setOffers(uniqueOffers);
+  })
+  .catch((err) => {
+    console.error("Error fetching offers:", err);
+  });
+}, []);
 
   const filteredOffers = offers.filter((offer) => {
     const matchesSearch =
@@ -186,9 +194,8 @@ useEffect(() => {
   ))}
 </div>
 
-
-      {/* Modal */}
-      {selected && (
+{/* Modal */}
+{selected && (
   <SwapDetailsModal
     offer={selected.offer}
     matchedOffer={selected.matched}
@@ -196,7 +203,6 @@ useEffect(() => {
     onClose={() => setSelected(null)}
   />
 )}
-
 
       {/* Floating Create Swap Offer button */}
       <a

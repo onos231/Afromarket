@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { jwtDecode } from "jwt-decode";
 
 export default function AuthPage() {
   const [username, setUsername] = useState("");
@@ -39,8 +40,12 @@ export default function AuthPage() {
           // ✅ Save the JWT token returned by FastAPI
           localStorage.setItem("token", data.access_token);
 
-          // ✅ Save the username separately for owner tracking
-          localStorage.setItem("afromarket_owner", data.username);
+// ✅ Use decoded token to get username
+const decoded: any = jwtDecode(data.access_token);
+const username = decoded.sub || "unknown";
+
+localStorage.setItem("afromarket_owner", username);
+
           window.dispatchEvent(new Event("afromarket-login"));
 
           setMessage("Login successful! Redirecting...");

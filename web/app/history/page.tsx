@@ -8,53 +8,101 @@ export default function HistoryPage() {
   const [owner, setOwner] = useState("");
 
   useEffect(() => {
-    const currentOwner = localStorage.getItem("afromarket_owner");
+    console.log("Stored owner:", localStorage.getItem("afromarket_owner"));
+console.log("Stored username:", localStorage.getItem("username"));
 
-    fetch("http://localhost:8000/offers")
-      .then((res) => res.json())
-      .then((data) => {
-        // ✅ handle both array or object response
-        const offersArray = Array.isArray(data) ? data : data.offers || [];
+  // ✅ Try both keys: "afromarket_owner" (new) and "username" (old)
+  const storedOwner =
+    localStorage.getItem("afromarket_owner") ||
+    localStorage.getItem("username") ||
+    "";
 
-        const myOffers = offersArray.filter(
-          (offer: any) =>
-            offer.have_item.owner?.toLowerCase() === currentOwner?.toLowerCase()
+  setOwner(storedOwner); // ✅ set immediately
+
+  fetch("http://localhost:8000/offers", {
+    headers: {
+      Authorization: `Bearer ${localStorage.getItem("token")}`,
+    },
+  })
+    .then((res) => res.json())
+    .then((data) => {
+      const offersArray = Array.isArray(data) ? data : data.offers || [];
+
+      const myOffers = offersArray.filter((offer: any) => {
+        const owner = offer?.have_item?.owner;
+        return (
+          owner &&
+          storedOwner &&
+          owner.toLowerCase() === storedOwner.toLowerCase()
         );
-
-        setHistory(myOffers);
-      })
-      .catch((err) => {
-        console.error("Error fetching history:", err);
-        setHistory([]);
       });
 
-    if (currentOwner) {
-      setOwner(currentOwner);
+      setHistory(myOffers);
+    })
+    .catch((err) => {
+      console.error("Error fetching history:", err);
+      setHistory([]);
+    });
+
+  const updateOwner = () => {
+    const newOwner =
+      localStorage.getItem("afromarket_owner") ||
+      localStorage.getItem("username") ||
+      "";
+    setOwner(newOwner);
+  };
+
+  window.addEventListener("afromarket_login", updateOwner);
+  window.addEventListener("afromarket_logout", updateOwner);
+
+  return () => {
+    window.removeEventListener("afromarket_login", updateOwner);
+    window.removeEventListener("afromarket_logout", updateOwner);
+  };
+}, []);
+
+
+  // ✅ Handlers for complete/decline
+  const handleComplete = async (offerId: string) => {
+    try {
+      await fetch(`http://localhost:8000/offers/${offerId}/complete`, {
+        method: "POST",
+      });
+      // Update UI locally
+      setHistory((prev) =>
+        prev.map((o) =>
+          o.id === offerId ? { ...o, status: "completed" } : o
+        )
+      );
+    } catch (err) {
+      console.error("Error completing offer:", err);
     }
+  };
 
-    const updateOwner = () => {
-      const newOwner = localStorage.getItem("afromarket_owner");
-      setOwner(newOwner || "");
-    };
-
-    window.addEventListener("afromarket_login", updateOwner);
-    window.addEventListener("afromarket_logout", updateOwner);
-
-    return () => {
-      window.removeEventListener("afromarket_login", updateOwner);
-      window.removeEventListener("afromarket_logout", updateOwner);
-    };
-  }, []);
+  const handleDecline = async (offerId: string) => {
+    try {
+      await fetch(`http://localhost:8000/offers/${offerId}/decline`, {
+        method: "POST",
+      });
+      // Update UI locally
+      setHistory((prev) =>
+        prev.map((o) =>
+          o.id === offerId ? { ...o, status: "declined" } : o
+        )
+      );
+    } catch (err) {
+      console.error("Error declining offer:", err);
+    }
+  };
 
   return (
     <AuthGuard>
       <main className="min-h-screen bg-gray-100 p-8">
-        <h1 className="text-4xl font-bold text-green-600 text-center">
-          Swap History
-        </h1>
-        <p className="text-center text-gray-600 mt-2">
-          Past swaps for <span className="font-semibold">{owner || "you"}</span>
-        </p>
+      <h1 className="text-3xl font-bold text-green-600 text-center">Swap History</h1>
+<p className="text-center text-gray-600 mt-2">
+Past swaps for {owner || "Guest"}
+</p>
+
 
         <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {history.map((item, idx) => (
@@ -72,6 +120,7 @@ export default function HistoryPage() {
                 Sent: {new Date(item.timestamp).toLocaleString()}
               </p>
 
+              {/* Status display */}
               {item.status === "matched" ? (
                 <span className="mt-4 inline-block px-3 py-1 rounded text-sm font-medium bg-green-100 text-green-700">
                   Matched with{" "}
@@ -92,10 +141,32 @@ export default function HistoryPage() {
                 <span className="mt-4 inline-block px-3 py-1 rounded text-sm font-medium bg-red-100 text-red-700">
                   Expired Swap
                 </span>
+              ) : item.status === "declined" ? (
+                <span className="mt-4 inline-block px-3 py-1 rounded text-sm font-medium bg-red-200 text-red-800">
+                  Declined Offer
+                </span>
               ) : (
                 <span className="mt-4 inline-block px-3 py-1 rounded text-sm font-medium bg-yellow-100 text-yellow-700">
                   Pending Offer
                 </span>
+              )}
+
+              {/* ✅ Action buttons */}
+              {item.status === "pending" && (
+                <div className="mt-4 flex gap-2">
+                  <button
+                    onClick={() => handleComplete(item.id)}
+                    className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
+                  >
+                    Complete
+                  </button>
+                  <button
+                    onClick={() => handleDecline(item.id)}
+                    className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
+                  >
+                    Decline
+                  </button>
+                </div>
               )}
             </div>
           ))}

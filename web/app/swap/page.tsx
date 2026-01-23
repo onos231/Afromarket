@@ -25,63 +25,80 @@ export default function SwapPage() {
   }, [searchParams]);
 
   useEffect(() => {
-    if (owner.trim() !== "" && owner !== "undefined" && owner !== "null") {
-      localStorage.setItem("afromarket_owner", owner);
-    }
-  }, [owner]);
+  if (
+    owner &&
+    owner.trim() !== "" &&
+    owner !== "undefined" &&
+    owner !== "null"
+  ) {
+    localStorage.setItem("afromarket_owner", owner);
+  }
+}, [owner]);
 
-  const handleSubmit = async (e: any) => {
-    e.preventDefault();
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
 
-    const raw = owner || localStorage.getItem("afromarket_owner") || "";
-    const currentOwner =
-      raw && raw !== "undefined" && raw !== "null" ? raw : "";
+  const token = localStorage.getItem("token");
+  if (!token || token === "undefined" || token === "null") {
+    alert("You must be logged in to submit a swap offer.");
+    return;
+  }
 
-    const newOffer = {
-      have_item: {
-        name: haveItem,
-        quantity: "1",
-        category: "Roots",
-        image: image || null,
-        owner: currentOwner,
-      },
-      want_item: {
-        name: wantItem,
-        quantity: "1",
-        category: "Roots",
-        owner: currentOwner,
-      },
-      location,
-      message,
-    };
+  const raw = owner || localStorage.getItem("afromarket_owner") || "";
+  const currentOwner =
+    raw && raw !== "undefined" && raw !== "null" ? raw : "";
 
-    console.log("Submitting offer:", newOffer);
-
-    try {
-      const token = localStorage.getItem("token");
-
-      const res = await fetch("http://localhost:8000/offers", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: token ? `Bearer ${token}` : "",
-        },
-        body: JSON.stringify(newOffer),
-      });
-
-      if (!res.ok) {
-        const errorText = await res.text();
-        throw new Error(`Failed: ${res.status} - ${errorText}`);
-      }
-
-      const data = await res.json();
-      alert("Swap offer submitted!");
-      console.log("Offer created:", data);
-    } catch (err) {
-      console.error("Error submitting offer:", err);
-      alert("Failed to create swap offer.");
-    }
+  const newOffer = {
+    have_item: {
+      name: haveItem,
+      quantity: "1",
+      category: "Roots",
+      image: image || null,
+      owner: currentOwner,
+    },
+    want_item: {
+      name: wantItem,
+      quantity: "1",
+      category: "Roots",
+      owner: currentOwner,
+    },
+    location,
+    message,
   };
+
+  console.log("Token being sent:", token);
+  console.log("Submitting offer:", newOffer);
+
+  try {
+    const res = await fetch("http://localhost:8000/offers", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(newOffer),
+    });
+
+    if (res.status === 401) {
+      alert("Session expired. Please log in again.");
+      localStorage.removeItem("token");
+      window.location.href = "/auth";
+      return;
+    }
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`Failed: ${res.status} - ${errorText}`);
+    }
+
+    const data = await res.json();
+    alert("Swap offer created!");
+    console.log("Offer created:", data);
+  } catch (err) {
+    console.error("Error submitting offer:", err);
+    alert("Failed to create swap offer.");
+  }
+};
 
   return (
     <AuthGuard>

@@ -6,15 +6,26 @@ type Offer = {
   id: string;
   have_name: string;
   have_quantity: string;
+  have_category: string;
+  have_image?: string | null;
   have_owner: string;
   want_name: string;
   want_quantity: string;
+  want_category: string;
+  want_image?: string | null;
   want_owner: string;
   location: string;
   message: string;
-  status: "pending" | "matched" | string;
+  status: "pending" | "matched" | "completed" | "declined" | string;
   timestamp: string;
   matched_with?: string | null;
+};
+
+type Props = {
+  offer: Offer;
+  matchedOffer: Offer | null;
+  currentUser: string;
+  onClose: () => void;
 };
 
 export default function SwapDetailsModal({
@@ -22,28 +33,78 @@ export default function SwapDetailsModal({
   matchedOffer,
   currentUser,
   onClose,
-}: {
-  offer: Offer;
-  matchedOffer: Offer | null;
-  currentUser: string;
-  onClose: () => void;
-}) {
+}: Props) {
+  // UI state
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<string[]>([]);
   const [chatInput, setChatInput] = useState("");
+  const [confirmationCode, setConfirmationCode] = useState("");
 
-  const handleSendMessage = () => {
-    if (chatInput.trim() === "") return;
-    setChatMessages((prev) => [...prev, chatInput]);
-    setChatInput("");
+  // Status state
+  const [swapStatus, setSwapStatus] = useState<Offer["status"]>(
+    offer.status === "completed" ? "completed" : offer.status
+  );
+
+  // Derived flags — define BEFORE any usage/logging
+  const isCompleted = swapStatus === "completed";
+  const isMatched =
+    !!matchedOffer &&
+    (offer.status === "matched" ||
+      matchedOffer.status === "matched" ||
+      swapStatus === "matched");
+
+  // Debug
+  console.log("swapStatus:", swapStatus);
+  console.log("isMatched:", isMatched);
+  console.log("isCompleted:", isCompleted);
+
+  // Badge helper
+  const StatusBadge = ({ status }: { status: string }) => {
+    const map: Record<string, string> = {
+      pending: "bg-gray-100 text-gray-700 border-gray-300",
+      matched: "bg-blue-100 text-blue-700 border-blue-300",
+      completed: "bg-green-100 text-green-700 border-green-300",
+      declined: "bg-red-100 text-red-700 border-red-300",
+    };
+    const cls = map[status] ?? "bg-gray-100 text-gray-700 border-gray-300";
+    return (
+      <span className={`inline-flex items-center gap-1 px-2 py-0.5 border rounded text-xs ${cls}`}>
+        {status === "completed" ? "✅" : status === "matched" ? "🔗" : status === "declined" ? "✖️" : "⏳"} {status}
+      </span>
+    );
   };
 
-  // Left is always the clicked offer; right is the matched offer only if truly matched
-  const left = offer;
-  const isMatched =
-    matchedOffer &&
-    (offer.status === "matched" || matchedOffer.status === "matched");
-  const right = isMatched ? matchedOffer : null;
+  // Actions
+  const handleComplete = async () => {
+    if (!confirmationCode) {
+      alert("Please enter confirmation code from the other user");
+      return;
+    }
+    try {
+      const res = await fetch(`/api/offers/${offer.id}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: confirmationCode }),
+      });
+      if (!res.ok) throw new Error("Failed to complete swap");
+      setSwapStatus("completed");
+    } catch (err) {
+      console.error("Error completing swap:", err);
+      alert("Could not complete swap. Please try again.");
+    }
+  };
+
+  const handleDecline = async () => {
+    try {
+      const res = await fetch(`/api/offers/${offer.id}/decline`, { method: "POST" });
+      if (!res.ok) throw new Error("Failed to decline swap");
+      setSwapStatus("declined");
+      onClose();
+    } catch (err) {
+      console.error("Error declining swap:", err);
+      alert("Could not decline swap. Please try again.");
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -55,91 +116,190 @@ export default function SwapDetailsModal({
           ✕
         </button>
 
-        <h1 className="text-2xl font-bold mb-6 text-green-600 text-center">
+        <h1 className="text-2xl font-bold mb-4 text-green-600 text-center">
           Swap deal details
         </h1>
 
-        <div className={`grid gap-6 ${right ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"}`}>
-          {/* Left side: always the clicked offer */}
+        {isCompleted && (
+          <div className="mb-4 p-3 bg-green-100 border border-green-300 text-green-800 rounded">
+            ✅ Swap completed successfully! Both parties have finalized this trade.
+          </div>
+        )}
+
+        {/* Offer cards */}
+        <div className="grid gap-6 md:grid-cols-2">
+          {/* Left: Your offer */}
           <div className="border rounded p-4">
-            <h3 className="text-xl font-bold mb-4 text-green-600">Your offer</h3>
-            <p><strong>Have:</strong> {left.have_name} ({left.have_quantity})</p>
-            <p><strong>Want:</strong> {left.want_name} ({left.want_quantity})</p>
-            <p><strong>Owner:</strong> {left.have_owner}</p>
-            <p><strong>Location:</strong> {left.location}</p>
-            <p><strong>Message:</strong> {left.message}</p>
-            <p><strong>Status:</strong> {left.status}</p>
-            <p><strong>Sent:</strong> {new Date(left.timestamp).toLocaleString()}</p>
+            <div className="flex justify-between mb-2">
+              <h3 className="text-xl font-bold text-green-600">Your offer</h3>
+              <StatusBadge status={swapStatus} />
+            </div>
+            <p><strong>Have:</strong> {offer.have_name} ({offer.have_quantity})</p>
+            <p><strong>Want:</strong> {offer.want_name} ({offer.want_quantity})</p>
+            <p><strong>Owner:</strong> {offer.have_owner} {isCompleted && "✅"}</p>
+            <p><strong>Location:</strong> {offer.location}</p>
+            <p><strong>Message:</strong> {offer.message}</p>
+            <p><strong>Status:</strong> {swapStatus}</p>
+            <p><strong>Sent:</strong> {new Date(offer.timestamp).toLocaleString()}</p>
           </div>
 
-          {/* Right side: only if matched */}
-          {right ? (
+          {/* Right: Matched offer */}
+          {matchedOffer && (
             <div className="border rounded p-4">
-              <h3 className="text-xl font-bold mb-4 text-blue-600">Matched with</h3>
-              <p><strong>Have:</strong> {right.have_name} ({right.have_quantity})</p>
-              <p><strong>Want:</strong> {right.want_name} ({right.want_quantity})</p>
-              <p><strong>Owner:</strong> {right.have_owner}</p>
-              <p><strong>Location:</strong> {right.location}</p>
-              <p><strong>Message:</strong> {right.message}</p>
-              <p><strong>Status:</strong> {right.status}</p>
-              <p><strong>Sent:</strong> {new Date(right.timestamp).toLocaleString()}</p>
-
-              {!chatOpen ? (
-                <button
-                  onClick={() => setChatOpen(true)}
-                  className="mt-4 w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
-                >
-                  Contact / Negotiate
-                </button>
-              ) : (
-                <div className="mt-4 border-t pt-4">
-                  <h3 className="text-lg font-semibold mb-2">Negotiation Chat</h3>
-                  <div className="h-32 overflow-y-auto border rounded p-2 mb-2 bg-gray-50">
-                    {chatMessages.length === 0 ? (
-                      <p className="text-gray-500 text-sm">No messages yet.</p>
-                    ) : (
-                      chatMessages.map((msg, idx) => (
-                        <p key={idx} className="text-sm text-gray-800 mb-1">
-                          You: {msg}
-                        </p>
-                      ))
-                    )}
-                  </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      placeholder="Type your message..."
-                      className="flex-1 border rounded p-2 text-sm"
-                    />
-                    <button
-                      onClick={handleSendMessage}
-                      className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 text-sm"
-                    >
-                      Send
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="border rounded p-4">
-              <h3 className="text-xl font-bold mb-4 text-blue-600">Match status</h3>
-              <p className="text-gray-700">
-                No confirmed match yet. You’ll see the counterparty’s details here once a match is made.
-              </p>
+              <div className="flex justify-between mb-2">
+                <h3 className="text-xl font-bold text-blue-600">Matched with</h3>
+                <StatusBadge status={swapStatus} />
+              </div>
+              <p><strong>Have:</strong> {matchedOffer.have_name} ({matchedOffer.have_quantity})</p>
+              <p><strong>Want:</strong> {matchedOffer.want_name} ({matchedOffer.want_quantity})</p>
+              <p><strong>Owner:</strong> {matchedOffer.have_owner} {isCompleted && "✅"}</p>
+              <p><strong>Location:</strong> {matchedOffer.location}</p>
+              <p><strong>Message:</strong> {matchedOffer.message}</p>
+              <p><strong>Status:</strong> {swapStatus}</p>
+              <p><strong>Sent:</strong> {new Date(matchedOffer.timestamp).toLocaleString()}</p>
             </div>
           )}
         </div>
 
+        {/* Negotiation + Finalize side by side */}
+        {isMatched && !isCompleted && (
+          <div className="mt-6 border-t pt-4">
+            <h3 className="text-lg font-semibold mb-4">Negotiation & Finalize</h3>
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* Chat Section */}
+              <div className="border rounded p-4">
+                {!chatOpen ? (
+                  <button
+                    onClick={() => setChatOpen(true)}
+                    className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
+                  >
+                    Contact / Negotiate
+                  </button>
+                ) : (
+                  <div>
+                    <h4 className="text-md font-semibold mb-2">Negotiation Chat</h4>
+                    <div className="h-32 overflow-y-auto border rounded p-2 mb-2 bg-gray-50">
+                      {chatMessages.length === 0 ? (
+                        <p className="text-gray-500 text-sm">No messages yet.</p>
+                      ) : (
+                        chatMessages.map((msg, idx) => (
+                          <p key={idx} className="text-sm text-gray-800 mb-1">
+                            You: {msg}
+                          </p>
+                        ))
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        placeholder="Type your message..."
+                        className="flex-1 border rounded p-2 text-sm"
+                      />
+                      <button
+                        onClick={() => {
+                          if (chatInput.trim() !== "") {
+                            setChatMessages((prev) => [...prev, chatInput]);
+                            setChatInput("");
+                          }
+                        }}
+                        className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 text-sm"
+                      >
+                        Send
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Finalize Swap Section */}
+  <div className="border rounded p-4">
+    <h4 className="text-md font-semibold mb-2">Finalize Swap</h4>
+
+    {currentUser === offer.have_owner ? (
+      // User A: enters code to complete
+      <div>
+        <input
+          type="text"
+          value={confirmationCode}
+          onChange={(e) => setConfirmationCode(e.target.value)}
+          placeholder="Enter confirmation code"
+          className="border rounded px-2 py-1 w-full mb-2"
+        />
+        <div className="flex gap-2">
+          <button
+            onClick={handleComplete}
+            className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
+          >
+            Complete
+          </button>
+          <button
+            onClick={handleDecline}
+            className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
+          >
+            Decline
+          </button>
+        </div>
+      </div>
+    ) : currentUser === matchedOffer?.have_owner ? (
+      // User B: generates and shares code
+      <div>
         <button
-          onClick={onClose}
-          className="mt-6 w-full bg-green-600 text-white py-2 rounded hover:bg-green-700"
+          onClick={async () => {
+            try {
+              const res = await fetch(`/api/offers/${offer.id}/generate-code`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+              });
+              const data = await res.json();
+              setConfirmationCode(data.code);
+            } catch (err) {
+              console.error("Error generating code:", err);
+              alert("Could not generate code. Please try again.");
+            }
+          }}
+          className="px-3 py-1 bg-purple-500 text-white rounded hover:bg-purple-600"
         >
-          Close
+          Generate Code
+        </button>
+
+        {confirmationCode && (
+          <p className="mt-2 text-gray-700">
+            Share this code with the other user: <strong>{confirmationCode}</strong>
+          </p>
+        )}
+
+        <button
+          onClick={handleDecline}
+          className="mt-2 px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
+        >
+          Decline
         </button>
       </div>
-    </div>
-  );
+    ) : (
+      <p className="text-gray-500 text-sm">
+        You are not authorized to finalize this swap.
+      </p>
+    )}
+  </div>
+</div>
+</div>
+)}
+
+{isCompleted && (
+<div className="mt-6 border-t pt-4 text-sm text-gray-700">
+This swap has been finalized. Chat and actions are disabled.
+</div>
+)}
+
+<button
+onClick={onClose}
+className="mt-6 w-full bg-green-600 text-white py-2 rounded hover:bg-green-700"
+>
+Close
+</button>
+</div>  {/* closes inner modal container */}
+</div>    
+);
 }
