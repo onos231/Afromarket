@@ -1,20 +1,33 @@
-from fastapi import FastAPI, Depends
-from fastapi.middleware.cors import CORSMiddleware
 import logging
-import sqlalchemy
-from sqlalchemy.orm import Session   # 👈 this fixes the NameError
 import uuid
+import json
+import sqlalchemy
 from datetime import datetime
+from typing import Dict, List, Optional
 
-from typing import Optional          # 👈 needed for Optional fields
-from pydantic import BaseModel       # 👈 needed for Pydantic schemas
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel
 
-from ai.backend.database import SessionLocal, engine, Base
-from ai.backend.models import Offer
+from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+
+# 👇 Local imports
+from ai.backend.database import SessionLocal, engine, Base, get_async_db, init_db
+from ai.backend.models import Offer, ChatMessage
 from ai.backend.auth import router as auth_router, get_current_user
+from . import models
+from . import chat
 
 
+# ✅ Pydantic schema for chat
+class ChatMessageCreate(BaseModel):
+    content: str
 
+
+# ✅ Logging setup
 logging.basicConfig(level=logging.DEBUG)
 
 # ✅ Create tables once
@@ -22,22 +35,31 @@ Base.metadata.create_all(bind=engine)
 
 print("SQLAlchemy version:", sqlalchemy.__version__)
 with engine.connect() as conn:
-    tables = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table';").fetchall()
+    tables = conn.exec_driver_sql(
+        "SELECT name FROM sqlite_master WHERE type='table';"
+    ).fetchall()
     print("Tables created:", tables)
 
+
+# ✅ FastAPI app
 app = FastAPI()
 
-# ✅ Add CORS
+# ✅ Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # or ["http://localhost:3000"] for your Next.js frontend
+    allow_origins=["http://localhost:3000"],  # exact origin
     allow_credentials=True,
-    allow_methods=["*"],  # allow POST, GET, OPTIONS, etc.
-    allow_headers=["*"],  # allow Authorization, Content-Type, etc.
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
+# 👇 Include your auth router if needed
+app.include_router(auth_router)
+app.include_router(chat.router)
 
-app.include_router(auth_router)  # no prefix here
+@app.on_event("startup")
+def on_startup():
+    init_db()
 
 # Dependency: get DB session
 def get_db():
@@ -78,6 +100,14 @@ def badge_for_status(status: str) -> str:
     else:
         return status
 
+@app.post("/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == form_data.username).first()
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Invalid credentials")
+    access_token = jwt.encode({"sub": user.username}, SECRET_KEY, algorithm=ALGORITHM)
+    return {"access_token": access_token, "token_type": "bearer"}
+
 
 # ✅ Create an offer
 @app.post("/offers")
@@ -86,6 +116,8 @@ def create_offer(
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+
+    print("Incoming offer JSON:", offer.dict()) # ✅ Debug
     def categorize_item(name: str) -> str:
         name = name.lower()
         if name in ["rice", "maize", "millet", "sorghum"]:
@@ -116,7 +148,7 @@ def create_offer(
         location=offer.location,
         message=offer.message,
         status="pending",
-        timestamp=datetime.utcnow().isoformat(),
+        timestamp=datetime.utcnow(), # ✅ pass actual datetime object
     )
 
     # ✅ Debug print at same level as db.add
@@ -509,3 +541,77 @@ def decline_swap(
     db.refresh(offer)
 
     return {"message": "Swap declined", "offer": to_dict(offer)}
+
+    # ✅ Send a message
+@app.post("/offers/{offer_id}/chat")
+def send_message(
+    offer_id: str,
+    msg: ChatMessageCreate,  # ✅ now defined
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    chat = ChatMessage(
+        offer_id=offer_id,
+        sender=current_user,
+        content=msg.content
+    )
+    db.add(chat)
+    db.commit()
+    db.refresh(chat)
+    return {"message": "sent", "chat": to_dict(chat)}
+
+
+@app.get("/offers/{offer_id}/chat")
+async def get_messages(offer_id: str, db: AsyncSession = Depends(get_async_db)):
+    result = await db.execute(
+        select(ChatMessage).where(ChatMessage.offer_id == offer_id).order_by(ChatMessage.timestamp)
+    )
+    chats = result.scalars().all()
+    return {
+        "messages": [
+            {
+                "id": c.id,
+                "sender": c.sender,
+                "content": c.content,
+                "timestamp": c.timestamp.isoformat(),
+            }
+            for c in chats
+        ]
+    }
+
+
+connections = {}  # keep at module level
+
+@app.websocket("/ws/chat/{offer_id}")
+async def chat_ws(websocket: WebSocket, offer_id: str, db: AsyncSession = Depends(get_async_db)):
+    await websocket.accept()
+    connections.setdefault(offer_id, []).append(websocket)
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            print("📥 Received:", data) # 👈 add this line here
+            sender = data.get("sender", "anon")
+            content = data.get("content", "")
+
+            # ✅ Save asynchronously
+            msg = ChatMessage(offer_id=offer_id, sender=sender, content=content)
+            db.add(msg)
+            await db.commit()
+            await db.refresh(msg)
+
+            payload = {
+                "id": msg.id,
+                "offer_id": offer_id,
+                "sender": msg.sender,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat(),
+            }
+
+            print("📡 Broadcasting to", len(connections[offer_id]), "connections") # 👈 add here
+            # ✅ Broadcast
+            for conn in connections[offer_id]:
+                await conn.send_text(json.dumps(payload))
+
+    except WebSocketDisconnect:
+        connections[offer_id].remove(websocket)

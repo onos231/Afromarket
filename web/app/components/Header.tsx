@@ -9,6 +9,8 @@ type TokenPayload = {
 };
 
 export default function Header() {
+  console.log("Header rendering"); // ✅ this runs every time Header mounts/renders
+
   const [owner, setOwner] = useState<string | null>(null);
   const router = useRouter();
   const pathname = usePathname(); // 👈 get current route

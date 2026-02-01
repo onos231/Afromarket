@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import ChatBox from "./ChatBox";
 
 type Offer = {
   id: string;
@@ -165,146 +166,117 @@ export default function SwapDetailsModal({
         </div>
 
         {/* Negotiation + Finalize side by side */}
-        {isMatched && !isCompleted && (
-          <div className="mt-6 border-t pt-4">
-            <h3 className="text-lg font-semibold mb-4">Negotiation & Finalize</h3>
-            <div className="grid md:grid-cols-2 gap-6">
-              {/* Chat Section */}
-              <div className="border rounded p-4">
-                {!chatOpen ? (
-                  <button
-                    onClick={() => setChatOpen(true)}
-                    className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
-                  >
-                    Contact / Negotiate
-                  </button>
-                ) : (
-                  <div>
-                    <h4 className="text-md font-semibold mb-2">Negotiation Chat</h4>
-                    <div className="h-32 overflow-y-auto border rounded p-2 mb-2 bg-gray-50">
-                      {chatMessages.length === 0 ? (
-                        <p className="text-gray-500 text-sm">No messages yet.</p>
-                      ) : (
-                        chatMessages.map((msg, idx) => (
-                          <p key={idx} className="text-sm text-gray-800 mb-1">
-                            You: {msg}
-                          </p>
-                        ))
-                      )}
-                    </div>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={chatInput}
-                        onChange={(e) => setChatInput(e.target.value)}
-                        placeholder="Type your message..."
-                        className="flex-1 border rounded p-2 text-sm"
-                      />
-                      <button
-                        onClick={() => {
-                          if (chatInput.trim() !== "") {
-                            setChatMessages((prev) => [...prev, chatInput]);
-                            setChatInput("");
-}
-}}
-className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 text-sm"
->
-Send
-</button>
-</div>
-</div>
-)}
-</div>
+{isMatched && !isCompleted && (
+  <div className="mt-6 border-t pt-4">
+    <h3 className="text-lg font-semibold mb-4">Negotiation & Finalize</h3>
+    <div className="grid md:grid-cols-2 gap-6">
+      {/* Chat Section */}
+      <div className="border rounded p-4">
+        {!chatOpen ? (
+          <button
+            onClick={() => setChatOpen(true)}
+            className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
+          >
+            Contact / Negotiate
+          </button>
+        ) : (
+          <div>
+            <h4 className="text-md font-semibold mb-2">Negotiation Chat</h4>
+            {/* ✅ Let ChatBox handle input + messages */}
+            <ChatBox offerId={offer.id} currentUser={currentUser} />
+          </div>
+        )}
+      </div>
 
-{/* Finalize Swap Section */}
-<div className="border rounded p-4">
-<h4 className="text-md font-semibold mb-2">Finalize Swap</h4>
+      {/* Finalize Swap Section */}
+      <div className="border rounded p-4">
+        <h4 className="text-md font-semibold mb-2">Finalize Swap</h4>
+        {/* ⬇️ Your existing creator/responder logic stays untouched */}
+        {isMatched ? (
+          isCreator ? (
+            // Creator: Enter code
+            <div>
+              <input
+                type="text"
+                value={confirmationCode}
+                onChange={(e) => setConfirmationCode(e.target.value)}
+                placeholder="Enter confirmation code"
+                className="border rounded px-2 py-1 w-full mb-2"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={handleComplete}
+                  className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
+                >
+                  Complete
+                </button>
+                <button
+                  onClick={handleDecline}
+                  className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
+                >
+                  Decline
+                </button>
+              </div>
+            </div>
+          ) : isResponder ? (
+            // Responder: Generate code
+            <div>
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`/api/offers/${offer.id}/generate-code`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                    });
+                    const data = await res.json();
+                    setConfirmationCode(data.code);
+                  } catch (err) {
+                    console.error("Error generating code:", err);
+                    alert("Could not generate code. Please try again.");
+                  }
+                }}
+                className="px-3 py-1 bg-purple-500 text-white rounded hover:bg-purple-600"
+              >
+                Generate Code
+              </button>
 
-{isMatched ? (
-isCreator ? (
-// Creator: Enter code
-<div>
-<input
-type="text"
-value={confirmationCode}
-onChange={(e) => setConfirmationCode(e.target.value)}
-placeholder="Enter confirmation code"
-className="border rounded px-2 py-1 w-full mb-2"
-/>
-<div className="flex gap-2">
-<button
-onClick={handleComplete}
-className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
->
-Complete
-</button>
-<button
-onClick={handleDecline}
-className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
->
-Decline
-</button>
-</div>
-</div>
-) : isResponder ? (
-// Responder: Generate code
-<div>
-<button
-onClick={async () => {
-try {
-const res = await fetch(`/api/offers/${offer.id}/generate-code`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-});
-const data = await res.json();
-setConfirmationCode(data.code);
-} catch (err) {
-console.error("Error generating code:", err);
-alert("Could not generate code. Please try again.");
-}
-}}
-className="px-3 py-1 bg-purple-500 text-white rounded hover:bg-purple-600"
->
-Generate Code
-</button>
+              {confirmationCode && (
+                <p className="mt-2 text-gray-700">
+                  Share this code with the other user: <strong>{confirmationCode}</strong>
+                </p>
+              )}
 
-{confirmationCode && (
-<p className="mt-2 text-gray-700">
-Share this code with the other user: <strong>{confirmationCode}</strong>
-</p>
-)}
-
-<button
-onClick={handleDecline}
-className="mt-2 px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
->
-Decline
-</button>
-</div>
-) : (
-<p className="text-gray-500 text-sm">
-You are not authorized to finalize this swap.
-</p>
-)
-) : null}
-</div>
-</div>
-</div>
+              <button
+                onClick={handleDecline}
+                className="mt-2 px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
+              >
+                Decline
+              </button>
+            </div>
+          ) : (
+            <p className="text-gray-500 text-sm">
+              You are not authorized to finalize this swap.
+            </p>
+          )
+        ) : null}
+      </div>
+    </div>
+  </div>
 )}
 
 {isCompleted && (
-<div className="mt-6 border-t pt-4 text-sm text-gray-700">
-This swap has been finalized. Chat and actions are disabled.
-</div>
+  <div className="mt-6 border-t pt-4 text-sm text-gray-700">
+    This swap has been finalized. Chat and actions are disabled.
+  </div>
 )}
 
 <button
-onClick={onClose}
-className="mt-6 w-full bg-green-600 text-white py-2 rounded hover:bg-green-700"
+  onClick={onClose}
+  className="mt-6 w-full bg-green-600 text-white py-2 rounded hover:bg-green-700"
 >
-Close
+  Close
 </button>
-</div>
-</div>
-);
-}
+  </div>
+  </div>
+  );
+  }

@@ -14,11 +14,12 @@ export default function AuthPage() {
   const handleSubmit = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/auth/${mode}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
+      const res = await fetch(`http://localhost:8000/auth/${mode}`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ username, password }),
+});
+
 
       let data;
       if (res.headers.get("content-type")?.includes("application/json")) {
