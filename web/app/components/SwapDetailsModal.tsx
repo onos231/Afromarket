@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";   // ✅ include useEffect here
 import ChatBox from "./ChatBox";
 
 type Offer = {
@@ -27,6 +27,7 @@ type Props = {
   matchedOffer: Offer | null;
   currentUser: string;
   onClose: () => void;
+  onStatusChange?: (newStatus: string) => void; // ✅ new prop
 };
 
 export default function SwapDetailsModal({
@@ -34,6 +35,7 @@ export default function SwapDetailsModal({
   matchedOffer,
   currentUser,
   onClose,
+  onStatusChange,   // ✅ include it here
 }: Props) {
   // UI state
   const [chatOpen, setChatOpen] = useState(false);
@@ -42,15 +44,16 @@ export default function SwapDetailsModal({
   const [confirmationCode, setConfirmationCode] = useState("");
 
   // Status state
-  const isMyMatchedOffer = currentUser === matchedOffer?.have_owner;
-
   const [swapStatus, setSwapStatus] = useState<Offer["status"]>(
     offer.status === "completed" ? "completed" : offer.status
   );
+  // ✅ Keep modal in sync with parent updates
+  useEffect(() => {
+    setSwapStatus(offer.status);
+  }, [offer.status]);
 
+  // After fetching offer status or when swapStatus changes
   const isCompleted = swapStatus === "completed";
-
-  const isMyOffer = currentUser === offer.have_owner;
   const isMatched = offer.status === "matched" && matchedOffer?.status === "matched";
   const isCreator = currentUser === offer.have_owner;
   const isResponder = currentUser === matchedOffer?.have_owner;
@@ -78,35 +81,88 @@ export default function SwapDetailsModal({
 
   // Actions
   const handleComplete = async () => {
-    if (!confirmationCode) {
-      alert("Please enter confirmation code from the other user");
-      return;
+  if (!confirmationCode) {
+    alert("Please enter confirmation code from the other user");
+    return;
+  }
+  try {
+  const token = localStorage.getItem("token");
+  const res = await fetch(
+    `http://localhost:8000/offers/${offer.id}/confirm-code?code=${confirmationCode}`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
     }
-    try {
-      const res = await fetch(`/api/offers/${offer.id}/complete`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: confirmationCode }),
-      });
-      if (!res.ok) throw new Error("Failed to complete swap");
-      setSwapStatus("completed");
-    } catch (err) {
-      console.error("Error completing swap:", err);
-      alert("Could not complete swap. Please try again.");
-    }
-  };
+  );
 
-  const handleDecline = async () => {
-    try {
-      const res = await fetch(`/api/offers/${offer.id}/decline`, { method: "POST" });
-      if (!res.ok) throw new Error("Failed to decline swap");
-      setSwapStatus("declined");
-      onClose();
-    } catch (err) {
-      console.error("Error declining swap:", err);
-      alert("Could not decline swap. Please try again.");
+  // First check if response is OK
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    alert(errorData.detail || "Wrong code, please try again.");
+    return; // ✅ stop here
+  }
+
+  // Only parse JSON once for success
+  const data = await res.json();
+
+  setSwapStatus("completed");
+  alert(data.message); // "Swap confirmed!"
+
+  if (onStatusChange) {
+    onStatusChange("completed"); // notify parent
+  }
+
+  // ✅ return here so catch won't run
+  return;
+} catch (err) {
+  console.error("Error completing swap:", err);
+  alert("Could not complete swap. Please try again.");
+}
+
+};
+
+const handleDecline = async () => {
+  const confirmDecline = window.confirm(
+    "Are you sure you want to decline this swap? Once declined, it will return to the pool."
+  );
+
+  if (!confirmDecline) {
+    // User canceled → stay in modal
+    return;
+  }
+
+  const token = localStorage.getItem("token");
+  try {
+    const res = await fetch(`http://localhost:8000/offers/${offer.id}/decline-swap`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    // ✅ Parse JSON once
+    const result = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      throw new Error(result.detail || "Failed to decline swap");
     }
-  };
+
+    // ✅ Show success message
+    alert(result.message || "Swap declined and returned to the pool");
+
+    // ✅ Update state
+    setSwapStatus("pending"); // card goes back to pool
+    onStatusChange?.("pending");
+
+    // ✅ Close modal automatically
+    onClose?.();
+
+  } catch (err) {
+    console.error("❌ Error declining swap:", err);
+    alert("Could not decline swap. Please try again.");
+  }
+};
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -221,30 +277,31 @@ export default function SwapDetailsModal({
           ) : isResponder ? (
             // Responder: Generate code
             <div>
-              <button
-                onClick={async () => {
-                  try {
-                    const res = await fetch(`/api/offers/${offer.id}/generate-code`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                    });
-                    const data = await res.json();
-                    setConfirmationCode(data.code);
-                  } catch (err) {
-                    console.error("Error generating code:", err);
-                    alert("Could not generate code. Please try again.");
-                  }
-                }}
-                className="px-3 py-1 bg-purple-500 text-white rounded hover:bg-purple-600"
-              >
-                Generate Code
-              </button>
+            <button
+onClick={async () => {
+  try {
+    const res = await fetch(`/api/offers/${offer.id}/generate-code`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    const data = await res.json();
+    // ✅ use the actual field name from backend
+    setConfirmationCode(data.confirmation_code);
+  } catch (err) {
+    console.error("Error generating code:", err);
+    alert("Could not generate code. Please try again.");
+  }
+}}
+className="px-3 py-1 bg-purple-500 text-white rounded hover:bg-purple-600"
+>
+Generate Code
+</button>
 
-              {confirmationCode && (
-                <p className="mt-2 text-gray-700">
-                  Share this code with the other user: <strong>{confirmationCode}</strong>
-                </p>
-              )}
+{confirmationCode && (
+<p className="mt-2 text-gray-700">
+  Share this code with the other user: <strong>{confirmationCode}</strong>
+</p>
+)}
 
               <button
                 onClick={handleDecline}

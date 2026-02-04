@@ -104,12 +104,19 @@ export default function LandingPage() {
   });
 
   // only show one card per user when matched
-  const visibleOffers = filteredOffers.filter((offer) => {
-    if (offer.status === "matched") {
-      return offer.have_owner === currentUser || offer.want_owner === currentUser;
-    }
-    return true;
-  });
+  // ✅ Show matched offers only if they involve the current user
+const matchedDealsForUser = filteredOffers.filter(
+  (offer) =>
+    offer.status === "matched" &&
+    (offer.have_owner === currentUser || offer.want_owner === currentUser)
+);
+
+// ✅ Show ALL pending offers (yours + others)
+const pendingDeals = filteredOffers.filter((offer) => offer.status === "pending");
+
+// ✅ Combine them
+const visibleOffers = [...matchedDealsForUser, ...pendingDeals];
+
 
   // frontend pagination
   const totalPages = Math.ceil(visibleOffers.length / pageSize);
@@ -237,11 +244,26 @@ export default function LandingPage() {
       {/* Modal */}
   {selected && (
     <SwapDetailsModal
-      offer={selected.offer}
-      matchedOffer={selected.matched}
-      currentUser={currentUser}
-      onClose={() => setSelected(null)}   // ✅ complete the onClose handler
-    />
+  offer={selected.offer}
+  matchedOffer={selected.matched}
+  currentUser={currentUser}
+  onClose={() => setSelected(null)}
+  onStatusChange={(newStatus) => {
+  setOffers((prev) =>
+    prev.map((o) =>
+      o.id === selected.offer.id || o.id === selected.matched?.id
+        ? { ...o, status: newStatus }
+        : o
+    )
+  );
+
+  const token = localStorage.getItem("token");
+  if (token) {
+    fetchOffers(token);   // refresh active offers
+    // fetchHistory(token);  // refresh completed/expired offers
+  }
+}}
+/>
   )}
 
   {/* Floating Create Swap Offer button */}

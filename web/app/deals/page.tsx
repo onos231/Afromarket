@@ -193,19 +193,63 @@ try {
   }
 
   // ✅ Use timestamp comparison like LandingPage
-  const isOfferAEarlier = new Date(offerA.timestamp) < new Date(offerB.timestamp);
-  const creatorOffer = isOfferAEarlier ? offerA : offerB;
-  const responderOffer = isOfferAEarlier ? offerB : offerA;
 
+  // If only one offer is selected
+if (offerA && !offerB) {
   return (
     <SwapDetailsModal
-      key={`${creatorOffer.id}-${responderOffer.id}`}
-      offer={creatorOffer}
-      matchedOffer={responderOffer}
+      offer={offerA}
+      matchedOffer={null}
       currentUser={owner}
       onClose={() => setSelected(null)}
+      onStatusChange={(newStatus) => {
+        // Update local state for single offer
+        setDeals((prev) =>
+          prev.map((d) =>
+            d.id === offerA.id ? { ...d, status: newStatus } : d
+          )
+        );
+
+        // Refresh from backend so LandingPage and DealsPage stay in sync
+        const token = localStorage.getItem("token");
+        if (token) {
+          fetchDeals(token);
+        }
+      }}
     />
   );
+}
+
+// ✅ Use timestamp comparison like LandingPage
+const isOfferAEarlier = new Date(offerA.timestamp) < new Date(offerB.timestamp);
+const creatorOffer = isOfferAEarlier ? offerA : offerB;
+const responderOffer = isOfferAEarlier ? offerB : offerA;
+
+return (
+  <SwapDetailsModal
+    key={`${creatorOffer.id}-${responderOffer.id}`}
+    offer={creatorOffer}
+    matchedOffer={responderOffer}
+    currentUser={owner}
+    onClose={() => setSelected(null)}
+    onStatusChange={(newStatus) => {
+      // ✅ Update both creator and responder in local state
+      setDeals((prev) =>
+        prev.map((d) =>
+          d.id === creatorOffer.id || d.id === responderOffer.id
+            ? { ...d, status: newStatus }
+            : d
+        )
+      );
+
+      // ✅ Refresh from backend so LandingPage and DealsPage stay in sync
+      const token = localStorage.getItem("token");
+      if (token) {
+        fetchDeals(token);
+      }
+    }}
+  />
+);
 })()}
 
     </main>

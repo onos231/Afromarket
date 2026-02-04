@@ -2,6 +2,7 @@ from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Integer
 from sqlalchemy.orm import relationship
 from ai.backend.database import Base
 from datetime import datetime
+import json
 
 
 class User(Base):
@@ -34,16 +35,35 @@ class Offer(Base):
     # General offer info
     location = Column(String)
     message = Column(Text, nullable=True)
-    status = Column(String)
 
-    # ✅ Use proper DateTime for timestamp
+    # Status tracking
+    status = Column(String, default="pending")
+
+    # ✅ Proper DateTime for timestamp
     timestamp = Column(DateTime, default=datetime.utcnow)
 
+    # Matching and confirmation details
     matched_with = Column(String, nullable=True)
-
-    # Swap enforcement
     completion_code = Column(String, nullable=True)
+    confirmation_code = Column(String, nullable=True)
     confirmed_by = Column(String, nullable=True)
+
+    # ✅ Decline tracking (store as JSON string in SQLite)
+    declined_with = Column(Text, default="[]")
+
+    # --- Helper methods ---
+    def get_declined_with(self):
+        try:
+            return json.loads(self.declined_with)
+        except Exception:
+            return []
+
+    def add_declined_with(self, other_id: str):
+        declined = self.get_declined_with()
+        if other_id not in declined:
+            declined.append(other_id)
+        self.declined_with = json.dumps(declined)
+
 
     # 👇 Relationship to chat messages
     chats = relationship("ChatMessage", back_populates="offer", cascade="all, delete-orphan")

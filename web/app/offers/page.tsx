@@ -1,8 +1,7 @@
 "use client";
 import { useState } from "react";
 
-
-export default function CreateOfferPage() {
+export default function OffersPage() {
   const [haveName, setHaveName] = useState("");
   const [haveQuantity, setHaveQuantity] = useState("");
   const [haveCategory, setHaveCategory] = useState("");
@@ -12,6 +11,9 @@ export default function CreateOfferPage() {
   const [location, setLocation] = useState("");
   const [message, setMessage] = useState("");
 
+  const [offerId, setOfferId] = useState<string | null>(null);
+  const [confirmationCode, setConfirmationCode] = useState<string | null>(null);
+
   const handleSubmit = async () => {
     const token = localStorage.getItem("token");
     if (!token) {
@@ -19,22 +21,51 @@ export default function CreateOfferPage() {
       return;
     }
 
-    const res = await fetch("http://localhost:8000/offers", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`, // ✅ send token
-      },
-      body: JSON.stringify({
-        have_item: { name: haveName, quantity: haveQuantity, category: haveCategory },
-        want_item: { name: wantName, quantity: wantQuantity, category: wantCategory },
-        location,
-        message,
-      }),
-    });
+    try {
+      const res = await fetch("http://localhost:8000/offers", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          have_item: { name: haveName, quantity: haveQuantity, category: haveCategory },
+          want_item: { name: wantName, quantity: wantQuantity, category: wantCategory },
+          location,
+          message,
+        }),
+      });
 
-    const data = await res.json();
-    alert(JSON.stringify(data));
+      if (!res.ok) throw new Error(`Error: ${res.status}`);
+
+      const data = await res.json();
+      setOfferId(data.id); // ✅ store the new offer ID
+      alert(`Offer created with ID: ${data.id}`);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to create offer");
+    }
+  };
+
+  const handleGenerateCode = async () => {
+    if (!offerId) {
+      alert("No offer created yet");
+      return;
+    }
+
+    try {
+      const res = await fetch(`http://localhost:8000/offers/${offerId}/generate-code`, {
+        method: "POST",
+      });
+
+      if (!res.ok) throw new Error(`Error: ${res.status}`);
+
+      const data = await res.json();
+      setConfirmationCode(data.confirmation_code);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to generate code");
+    }
   };
 
   return (
@@ -55,6 +86,22 @@ export default function CreateOfferPage() {
       <button onClick={handleSubmit} className="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700">
         Submit Offer
       </button>
+
+      {offerId && (
+        <div className="mt-4">
+          <p className="text-sm text-gray-700">Offer ID: {offerId}</p>
+          <button onClick={handleGenerateCode} className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 mt-2">
+            Generate Code
+          </button>
+        </div>
+      )}
+
+      {confirmationCode && (
+        <div className="mt-4 p-2 border rounded bg-gray-100">
+          <p className="text-sm font-bold">Confirmation Code:</p>
+          <p className="text-lg text-green-700">{confirmationCode}</p>
+        </div>
+      )}
     </div>
   );
 }

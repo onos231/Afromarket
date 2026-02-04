@@ -5,6 +5,8 @@ import sqlalchemy
 from datetime import datetime
 from typing import Dict, List, Optional
 
+import random
+
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
@@ -20,6 +22,32 @@ from ai.backend.models import Offer, ChatMessage
 from ai.backend.auth import router as auth_router, get_current_user
 from . import models
 from . import chat
+
+
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
+
+import secrets
+import string
+
+from .database import get_db
+from .models import Offer
+
+def generate_swap_code(length: int = 8) -> str:
+    chars = string.ascii_uppercase + string.digits
+    return ''.join(secrets.choice(chars) for _ in range(length))
+
+SECRET_KEY = "yoursecret"   # use the same secret you used when issuing tokens
+ALGORITHM = "HS256"         # match the algorithm used to sign tokens
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+
+def verify_token(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload   # you can return user info from payload if needed
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
 # ✅ Pydantic schema for chat
@@ -99,6 +127,42 @@ def badge_for_status(status: str) -> str:
         return "🔴 " + status.capitalize()
     else:
         return status
+
+def generate_code(length=8):
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
+
+@app.post("/offers/{offer_id}/match/{matched_id}")
+def confirm_swap(offer_id: str, matched_id: str, db: Session = Depends(get_db)):
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    matched_offer = db.query(Offer).filter(Offer.id == matched_id).first()
+
+    if not offer or not matched_offer:
+        raise HTTPException(status_code=404, detail="Offer not found")
+
+    # Generate codes
+    completion_code = str(uuid.uuid4())
+    confirmation_code = generate_code()
+
+    # Assign codes and update status
+    offer.status = "matched"
+    offer.matched_with = matched_id
+    offer.completion_code = str(uuid.uuid4())
+    offer.confirmation_code = generate_code()
+    offer.confirmed_by = offer.have_owner
+
+    matched_offer.status = "matched"
+    matched_offer.matched_with = offer_id
+    matched_offer.completion_code = completion_code
+    matched_offer.confirmation_code = generate_code()
+    matched_offer.confirmed_by = matched_offer.have_owner
+
+    db.commit()
+
+    return {
+        "completion_code": completion_code,
+        "confirmation_code": confirmation_code
+    }
+
 
 @app.post("/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
@@ -460,48 +524,34 @@ def generate_secure_code(length: int = 20) -> str:
 
 # ✅ Creator generates code
 @app.post("/offers/{offer_id}/generate-code")
-def generate_code(
-    offer_id: str,
-    current_user: str = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
+def generate_offer_code(offer_id: str, db: Session = Depends(get_db)):
     offer = db.query(Offer).filter(Offer.id == offer_id).first()
     if not offer:
         raise HTTPException(status_code=404, detail="Offer not found")
 
-    if offer.have_owner != current_user:
-        raise HTTPException(status_code=403, detail="Only the creator can generate the code")
+    # Generate codes
+    offer.completion_code = str(uuid.uuid4())
+    offer.confirmation_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+    offer.confirmed_by = offer.have_owner
 
-    code = generate_secure_code()
-    offer.completion_code = code
-    offer.status = "code_generated"
-    db.add(offer)
     db.commit()
-    db.refresh(offer)
+    return {
+        "completion_code": offer.completion_code,
+        "confirmation_code": offer.confirmation_code,
+        "confirmed_by": offer.confirmed_by
+    }
 
-    return {"message": "Code generated successfully", "code": code}
-
-# ✅ Responder confirms code
 @app.post("/offers/{offer_id}/confirm-code")
-def confirm_code(
-    offer_id: str,
-    code: str,
-    current_user: str = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
+def confirm_code(offer_id: str, code: str, db: Session = Depends(get_db)):
     offer = db.query(Offer).filter(Offer.id == offer_id).first()
     if not offer:
         raise HTTPException(status_code=404, detail="Offer not found")
 
-    if offer.want_owner != current_user:
-        raise HTTPException(status_code=403, detail="Only the responder can confirm the code")
-
-    if offer.completion_code != code:
+    if offer.confirmation_code != code:
         raise HTTPException(status_code=400, detail="Invalid code")
 
     offer.status = "completed"
-    offer.confirmed_by = current_user
-    offer.completion_code = None
+    db.add(offer)
 
     if offer.matched_with:
         partner = db.query(Offer).filter(Offer.id == offer.matched_with).first()
@@ -509,13 +559,10 @@ def confirm_code(
             partner.status = "completed"
             db.add(partner)
 
-    db.add(offer)
     db.commit()
-    db.refresh(offer)
+    return {"message": "Swap confirmed!"}
 
-    return {"message": "Swap completed successfully", "offer": to_dict(offer)}
 
-# ✅ Decline swap (either user)
 @app.post("/offers/{offer_id}/decline-swap")
 def decline_swap(
     offer_id: str,
@@ -526,21 +573,36 @@ def decline_swap(
     if not offer:
         raise HTTPException(status_code=404, detail="Offer not found")
 
-    if current_user not in [offer.have_owner, offer.want_owner]:
-        raise HTTPException(status_code=403, detail="You are not part of this swap")
+    matched_with_id = offer.matched_with
 
-    offer.status = "declined"
-    if offer.matched_with:
-        partner = db.query(Offer).filter(Offer.id == offer.matched_with).first()
-        if partner:
-            partner.status = "declined"
-            db.add(partner)
+    # Reset this offer
+    offer.status = "pending"
+    offer.matched_with = None
 
-    db.add(offer)
+    # Reset the other side too
+    if matched_with_id:
+        other_offer = db.query(Offer).filter(Offer.id == matched_with_id).first()
+        if other_offer:
+            other_offer.status = "pending"
+            other_offer.matched_with = None
+
+            # ✅ Track decline relationship
+            offer.add_declined_with(other_offer.id)
+            other_offer.add_declined_with(offer.id)
+
+    # ✅ Clear chat messages tied to this offer
+    db.query(ChatMessage).filter(ChatMessage.offer_id == offer.id).delete()
+
+    # ✅ Also clear chat messages tied to the other offer (if any)
+    if matched_with_id:
+        db.query(ChatMessage).filter(ChatMessage.offer_id == matched_with_id).delete()
+
     db.commit()
     db.refresh(offer)
 
-    return {"message": "Swap declined", "offer": to_dict(offer)}
+    return {"message": "Swap declined and returned to pool"}
+
+
 
     # ✅ Send a message
 @app.post("/offers/{offer_id}/chat")
@@ -615,3 +677,39 @@ async def chat_ws(websocket: WebSocket, offer_id: str, db: AsyncSession = Depend
 
     except WebSocketDisconnect:
         connections[offer_id].remove(websocket)
+
+@app.delete("/offers/history/clear")
+def clear_offer_history(
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    offers = db.query(Offer).filter(
+        Offer.have_owner == current_user,
+        Offer.status.in_(["completed", "declined", "expired"])
+    ).all()
+
+    if not offers:
+        return {"message": "No history offers found to clear"}
+
+    for o in offers:
+        db.delete(o)
+    db.commit()
+    return {"message": f"Cleared {len(offers)} history offers"}
+
+@app.delete("/offers/history/{offer_id}")
+def delete_offer_history(
+    offer_id: str,
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    offer = db.query(Offer).filter(
+        Offer.id == offer_id,
+        Offer.have_owner == current_user
+    ).first()
+
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offer not found")
+
+    db.delete(offer)
+    db.commit()
+    return {"message": "Offer deleted successfully"}
